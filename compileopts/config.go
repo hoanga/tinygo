@@ -531,6 +531,10 @@ func (c *Config) LibcCFlags() []string {
 			)
 		}
 		return cflags
+	case "freebsd-libc":
+		// Use the FreeBSD system libc with its default include paths.
+		// No -nostdlibinc: we rely on the system headers at /usr/include.
+		return nil
 	case "":
 		// No libc specified, nothing to add.
 		return nil

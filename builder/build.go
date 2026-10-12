@@ -215,6 +215,11 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (*BuildR
 		defer unlock()
 		libcDependencies = append(libcDependencies, libcJob)
 		libcDependencies = append(libcDependencies, makeMinGWExtraLibs(tmpdir, config.GOARCH())...)
+	case "freebsd-libc":
+		// Use the FreeBSD system CRT and libc (user-provided sysroot, Option A).
+		// crt1.o provides _start, which calls __libc_start1 (from -lc) then main().
+		// The -lc and -lpthread flags are set in the target LDFlags.
+		libcDependencies = append(libcDependencies, dummyCompileJob("/usr/lib/crt1.o"))
 	case "":
 		// no library specified, so nothing to do
 	default:

@@ -576,6 +576,19 @@ func defaultTarget(options *Options) (*TargetSpec, error) {
 			"src/runtime/runtime_windows.c")
 	case "wasm", "wasip1", "wasip2":
 		return nil, fmt.Errorf("GOOS=%s but GOARCH is unset. Please set GOARCH to wasm", options.GOOS)
+	case "freebsd":
+		spec.GC = "boehm"
+		spec.Scheduler = "threads"
+		spec.Linker = "ld.lld"
+		spec.RTLib = "compiler-rt"
+		spec.Libc = "freebsd-libc"
+		spec.LDFlags = append(spec.LDFlags, "--gc-sections", "--dynamic-linker", "/libexec/ld-elf.so.1", "-L/usr/lib", "-lc", "-lpthread")
+		spec.ExtraFiles = append(spec.ExtraFiles,
+			"src/internal/futex/futex_freebsd.c",
+			"src/internal/task/task_threads.c",
+			"src/runtime/runtime_unix.c",
+			"src/runtime/signal.c")
+		llvmos = "freebsd13.0" // adjust version as appropriate
 	default:
 		return nil, fmt.Errorf("unknown GOOS=%s", options.GOOS)
 	}
