@@ -1,9 +1,11 @@
 //go:build none
 
-// This file is included on Darwin and Linux (despite the //go:build line above).
+// This file is included on Darwin, Linux, and FreeBSD (despite the //go:build line above).
 
+#ifndef __FreeBSD__
 #define _GNU_SOURCE
 #define _XOPEN_SOURCE
+#endif
 #include <signal.h>
 #include <unistd.h>
 #include <stdint.h>
@@ -125,6 +127,16 @@ static void signal_handler(int sig, siginfo_t *info, void *context) {
 		#else // aarch64, mips, maybe others
 			addr = uctx->uc_mcontext.pc;
 		#endif
+	#elif __FreeBSD__
+        #if __amd64__
+        addr = uctx->uc_mcontext.mc_rip;
+        #elif __aarch64__
+        addr = uctx->uc_mcontext.mc_gpregs.gp_elr;
+        #elif __i386__
+        addr = uctx->uc_mcontext.mc_eip;
+        #else
+            #error unknown FreeBSD architecture
+        #endif
 	#else
 		#error unknown platform
 	#endif
