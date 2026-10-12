@@ -20,33 +20,93 @@ import (
 func (b *builder) createRawSyscall(call *ssa.CallCommon) (llvm.Value, error) {
 	num := b.getValue(call.Args[0], getPos(call))
 	switch {
-	case b.GOARCH == "amd64" && b.GOOS == "linux":
+	case b.GOARCH == "amd64" && (b.GOOS == "linux" || b.GOOS == "freebsd"):
 		// Sources:
 		//   https://stackoverflow.com/a/2538212
 		//   https://en.wikibooks.org/wiki/X86_Assembly/Interfacing_with_Linux#syscall
+		//
+		// On FreeBSD, Syscall9 passes up to 9 arguments: the first 6 go in
+		// registers (rdi, rsi, rdx, r10, r8, r9) and arguments 7-9 are passed
+		// on the stack at [rsp+8], [rsp+16], [rsp+24] respectively.
+		// Linux syscalls are limited to 6 arguments.
 		args := []llvm.Value{num}
 		argTypes := []llvm.Type{b.uintptrType}
 		// Constraints will look something like:
 		//   "={rax},0,{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11}"
-		var constraints strings.Builder
-		constraints.WriteString("={rax},0")
-		for i, arg := range call.Args[1:] {
-			constraints.WriteString("," + [...]string{
+		constraints := "={rax},0"
+
+		allArgs := call.Args[1:]
+		numRegArgs := len(allArgs)
+		if numRegArgs > 6 {
+			numRegArgs = 6
+		}
+		for i := 0; i < numRegArgs; i++ {
+			constraints += "," + [...]string{
 				"{rdi}",
 				"{rsi}",
 				"{rdx}",
 				"{r10}",
 				"{r8}",
 				"{r9}",
-			}[i])
-			llvmValue := b.getValue(arg, getPos(call))
+			}[i]
+			llvmValue := b.getValue(allArgs[i], getPos(call))
 			args = append(args, llvmValue)
 			argTypes = append(argTypes, llvmValue.Type())
 		}
+
+		// On FreeBSD, arguments 7-9 are passed on the stack.
+		numStackArgs := 0
+		if b.GOOS == "freebsd" && len(allArgs) > 6 {
+			numStackArgs = len(allArgs) - 6
+			if numStackArgs > 3 {
+				numStackArgs = 3
+			}
+			for i := 0; i < numStackArgs; i++ {
+				constraints += ",r"
+				llvmValue := b.getValue(allArgs[6+i], getPos(call))
+				args = append(args, llvmValue)
+				argTypes = append(argTypes, llvmValue.Type())
+			}
+		}
+
 		// rcx and r11 are clobbered by the syscall, so make sure they are not used
-		constraints.WriteString(",~{rcx},~{r11}")
+		constraints += ",~{rcx},~{r11}"
+
+		var asmStr string
+		if numStackArgs > 0 {
+			// Allocate 32 bytes below RSP (maintains 16-byte alignment).
+			// Args 7-9 go at [rsp+8], [rsp+16], [rsp+24]; [rsp+0] is the
+			// implicit return-address slot expected by the FreeBSD kernel.
+			// Operand indices: 0=output(rax), 1=num(tied), 2..1+numRegArgs=regs,
+			// then stack args start at index 2+numRegArgs.
+			asmStr = "sub rsp, 32\n"
+			baseIdx := 2 + numRegArgs
+			for i := 0; i < numStackArgs; i++ {
+				asmStr += "mov qword ptr [rsp + " + strconv.Itoa((i+1)*8) + "], $" + strconv.Itoa(baseIdx+i) + "\n"
+			}
+			// FreeBSD sets CF on error with positive errno in rax.
+			// Capture CF before restoring rsp (add clears CF), then convert to
+			// Linux-style negative errno: sbb/xor/sub turns +errno into -errno.
+			// r11 is already clobbered by syscall, so safe to reuse.
+			asmStr += "syscall\n"
+			asmStr += "sbb r11, r11\n"
+			asmStr += "xor rax, r11\n"
+			asmStr += "sub rax, r11\n"
+			asmStr += "add rsp, 32"
+			constraints += ",~{memory}"
+		} else if b.GOOS == "freebsd" {
+			// FreeBSD sets CF on error with positive errno in rax.
+			// Convert to Linux-style negative errno using the sbb/xor/sub trick:
+			//   sbb r11, r11  → r11 = 0 if CF=0, -1 if CF=1
+			//   xor rax, r11  → rax unchanged if success, ~rax if error
+			//   sub rax, r11  → rax unchanged if success, -errno if error
+			asmStr = "syscall\nsbb r11, r11\nxor rax, r11\nsub rax, r11"
+		} else {
+			asmStr = "syscall"
+		}
+
 		fnType := llvm.FunctionType(b.uintptrType, argTypes, false)
-		target := llvm.InlineAsm(fnType, "syscall", constraints.String(), true, false, llvm.InlineAsmDialectIntel, false)
+		target := llvm.InlineAsm(fnType, asmStr, constraints, true, false, llvm.InlineAsmDialectIntel, false)
 		return b.CreateCall(fnType, target, args, ""), nil
 
 	case b.GOARCH == "386" && b.GOOS == "linux":
@@ -119,38 +179,49 @@ func (b *builder) createRawSyscall(call *ssa.CallCommon) (llvm.Value, error) {
 		target := llvm.InlineAsm(fnType, "svc #0", constraints.String(), true, false, 0, false)
 		return b.CreateCall(fnType, target, args, ""), nil
 
-	case b.GOARCH == "arm64" && b.GOOS == "linux":
+	case b.GOARCH == "arm64" && (b.GOOS == "linux" || b.GOOS == "freebsd"):
 		// Source: syscall(2) man page.
+		//
+		// On Linux, syscalls use x0-x5 for arguments (6 max).
+		// On FreeBSD, syscalls use x0-x7 for arguments (8 max) matching the
+		// standard AArch64 calling convention. FreeBSD's Syscall9 places
+		// arguments 1-8 in x0-x7; argument 9 is not supported via this path.
 		args := []llvm.Value{}
 		argTypes := []llvm.Type{}
 		// Constraints will look something like:
 		//   ={x0},0,{x1},{x2},{x8},~{x3},~{x4},~{x5},~{x6},~{x7},~{x16},~{x17}
-		var constraints strings.Builder
-		constraints.WriteString("={x0}")
-		for i, arg := range call.Args[1:] {
-			constraints.WriteString("," + [...]string{
-				"0", // tie to output
-				"{x1}",
-				"{x2}",
-				"{x3}",
-				"{x4}",
-				"{x5}",
-			}[i])
+		constraints := "={x0}"
+
+		// Linux: 6 arg registers (x0-x5). FreeBSD: 8 arg registers (x0-x7).
+		maxRegArgs := 6
+		if b.GOOS == "freebsd" {
+			maxRegArgs = 8
+		}
+		regNames := [...]string{
+			"0", // x0 tied to output
+			"{x1}", "{x2}", "{x3}", "{x4}", "{x5}", "{x6}", "{x7}",
+		}
+		allArgs := call.Args[1:]
+		if len(allArgs) > maxRegArgs {
+			return llvm.Value{}, b.makeError(call.Pos(), "too many arguments for syscall on "+b.GOOS+"/arm64")
+		}
+		for i, arg := range allArgs {
+			constraints += "," + regNames[i]
 			llvmValue := b.getValue(arg, getPos(call))
 			args = append(args, llvmValue)
 			argTypes = append(argTypes, llvmValue.Type())
 		}
 		args = append(args, num)
 		argTypes = append(argTypes, b.uintptrType)
-		constraints.WriteString(",{x8}") // syscall number
+		constraints += ",{x8}" // syscall number
 		for i := len(call.Args) - 1; i < 8; i++ {
 			// x0-x7 may get clobbered during the syscall following the aarch64
 			// calling convention.
-			constraints.WriteString(",~{x" + strconv.Itoa(i) + "}")
+			constraints += ",~{x" + strconv.Itoa(i) + "}"
 		}
-		constraints.WriteString(",~{x16},~{x17}") // scratch registers
+		constraints += ",~{x16},~{x17}" // scratch registers
 		fnType := llvm.FunctionType(b.uintptrType, argTypes, false)
-		target := llvm.InlineAsm(fnType, "svc #0", constraints.String(), true, false, 0, false)
+		target := llvm.InlineAsm(fnType, "svc #0", constraints, true, false, 0, false)
 		return b.CreateCall(fnType, target, args, ""), nil
 
 	case (b.GOARCH == "mips" || b.GOARCH == "mipsle") && b.GOOS == "linux":
@@ -253,7 +324,7 @@ func (b *builder) createRawSyscall(call *ssa.CallCommon) (llvm.Value, error) {
 // functions, depending on the target OS/arch.
 func (b *builder) createSyscall(call *ssa.CallCommon) (llvm.Value, error) {
 	switch b.GOOS {
-	case "linux":
+	case "linux", "freebsd":
 		syscallResult, err := b.createRawSyscall(call)
 		if err != nil {
 			return syscallResult, err
