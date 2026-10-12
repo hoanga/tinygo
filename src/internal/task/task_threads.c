@@ -13,6 +13,12 @@
 // BDWGC also uses SIGRTMIN+6 on Linux, which seems like a reasonable choice.
 #define taskPauseSignal (SIGRTMIN + 6)
 
+#elif __FreeBSD__
+#include <semaphore.h>
+
+// Use the same signal as Linux/BDWGC. FreeBSD supports POSIX real-time signals.
+#define taskPauseSignal (SIGRTMIN + 6)
+
 #elif __APPLE__
 #include <dispatch/dispatch.h>
 // SIGIO is for interrupt-driven I/O.
