@@ -5,7 +5,6 @@ package machine
 import (
 	"device/arm"
 	"device/nrf"
-	"errors"
 	"runtime/interrupt"
 	"runtime/volatile"
 	"unsafe"
@@ -49,12 +48,6 @@ const (
 )
 
 var I2S0 = I2S{Bus: nrf.I2S}
-
-var (
-	errI2SPins        = errors.New("i2s: missing pin")
-	errI2SUnsupported = errors.New("i2s: unsupported configuration")
-	errI2SNotRunning  = errors.New("i2s: not running")
-)
 
 // Configure sets up the I2S peripheral and starts it.
 // If you use Bluetooth, enable it first since the SoftDevice then owns the clock.

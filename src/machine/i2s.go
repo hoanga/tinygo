@@ -1,4 +1,4 @@
-//go:build (sam && atsamd21) || nrf52 || nrf52833 || nrf52840 || esp32c3 || esp32c6 || esp32s3
+//go:build (sam && atsamd21) || nrf52 || nrf52833 || nrf52840 || esp32c3 || esp32c6 || esp32s3 || esp32p4
 
 // This is the definition for I2S bus functions.
 // Actual implementations if available for any given hardware
@@ -58,6 +58,9 @@ const (
 
 var (
 	ErrInvalidSampleFrequency = errors.New("i2s: invalid sample frequency")
+	errI2SPins                = errors.New("i2s: missing pin")
+	errI2SUnsupported         = errors.New("i2s: unsupported configuration")
+	errI2SNotRunning          = errors.New("i2s: not running")
 )
 
 // All fields are optional and may not be required or used on a particular platform.
@@ -77,4 +80,8 @@ type I2SConfig struct {
 	AudioFrequency  uint32
 	MainClockOutput bool
 	Stereo          bool
+	// MCLK and MCLKFrequency configure an optional master clock output.
+	// MCLKFrequency defaults to 256 times AudioFrequency when zero.
+	MCLK          Pin
+	MCLKFrequency uint32
 }

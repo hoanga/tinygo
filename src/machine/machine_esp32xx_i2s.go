@@ -4,7 +4,6 @@ package machine
 
 import (
 	"device/esp"
-	"errors"
 	"runtime/interrupt"
 	"runtime/volatile"
 	"unsafe"
@@ -97,12 +96,6 @@ type i2sGDMA struct {
 }
 
 var I2S0 = I2S{Bus: esp.I2S0}
-
-var (
-	errI2SPins        = errors.New("i2s: missing pin")
-	errI2SUnsupported = errors.New("i2s: unsupported configuration")
-	errI2SNotRunning  = errors.New("i2s: not running")
-)
 
 // Configure sets up the I2S peripheral and starts it.
 func (i2s *I2S) Configure(config I2SConfig) error {
