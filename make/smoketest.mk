@@ -658,6 +658,13 @@ smoketest-riscv: | build/smoke
 
 	$(TINYGO) build -size short -o $(SMOKE_OUT).bin -target=makerfabs-esp32c3spi35 examples/machinetest
 	@$(MD5SUM) $(SMOKE_OUT).bin
+
+	# esp32p4-nano
+	$(TINYGO) build -size short -o $(SMOKE_OUT).bin -target=esp32p4-nano	examples/i2s-tone
+	@$(MD5SUM) $(SMOKE_OUT).bin
+	# crowpanel-esp32p4-10-1
+	$(TINYGO) build -size short -o $(SMOKE_OUT).bin -target=crowpanel-esp32p4-10-1	examples/i2s-tone
+	@$(MD5SUM) $(SMOKE_OUT).bin
 	$(TINYGO) build -size short -o $(SMOKE_OUT).hex -target=hifive1b            examples/blinky1
 	@$(MD5SUM) $(SMOKE_OUT).hex
 	$(TINYGO) build -size short -o $(SMOKE_OUT).hex -target=maixbit             examples/blinky1

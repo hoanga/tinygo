@@ -16,7 +16,7 @@ func main() {
 		sine[i] = int16(math.Sin(2*math.Pi*float64(i)/float64(len(sine))) * 8000)
 	}
 
-	err := machine.I2S0.Configure(machine.I2SConfig{
+	err := i2s.Configure(machine.I2SConfig{
 		SCK:            pinSCK,
 		WS:             pinWS,
 		SDO:            pinSDO,
